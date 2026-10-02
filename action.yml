@@ -1,0 +1,93 @@
+name: site-cachebust
+description: Stamp every file address of a static site with that file's content hash, set year-long cache lifetimes, and publish the site to Cloudflare Pages.
+
+inputs:
+  project-name:
+    description: The Cloudflare Pages project to publish to.
+    required: true
+  cloudflare-api-token:
+    description: A Cloudflare API token that can publish to Cloudflare Pages, and write items in the bucket when one is used.
+    required: true
+  cloudflare-account-id:
+    description: The Cloudflare account that holds the project.
+    required: true
+  site-folder:
+    description: The folder that holds the site, relative to the repository root.
+    required: false
+    default: .
+  exclude:
+    description: Paths in the site folder that are not part of the site, one per line. Names that start with "." are always left out.
+    required: false
+    default: ""
+  bucket:
+    description: An R2 bucket for files too large for Cloudflare Pages, which accepts files up to 25 MiB. The site's own worker serves them.
+    required: false
+    default: ""
+  bucket-files:
+    description: The files that go to the bucket instead of to Pages, one per line. Each is uploaded only when its content differs from the bucket's copy.
+    required: false
+    default: ""
+  branch:
+    description: The Cloudflare Pages branch to publish.
+    required: false
+    default: main
+
+runs:
+  using: composite
+  steps:
+    # - The stamped copy is written inside the workspace, so a site's own wrangler.toml can name it as its output folder.
+    - name: Stamp the site
+      shell: bash
+      env:
+        SITE_FOLDER: ${{ inputs.site-folder }}
+        STAGE_FOLDER: ${{ github.workspace }}/.site-cachebust-published
+        EXCLUDE: ${{ inputs.exclude }}
+        BUCKET_FILES: ${{ inputs.bucket-files }}
+        COMMIT: ${{ github.sha }}
+      run: node "${{ github.action_path }}/stamp.cjs"
+
+    # - R2 speaks the S3 protocol, where the token's id is the access key and the SHA-256 hash of the token is the secret key.
+    # - The bucket remembers each file's MD5 hash as its ETag. A file whose hash already matches is skipped.
+    # - The two CHECKSUM settings keep the AWS command line tool from sending newer checksum headers that R2 refuses.
+    - name: Fill the bucket
+      if: inputs.bucket != ''
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        SITE_FOLDER: ${{ inputs.site-folder }}
+        BUCKET: ${{ inputs.bucket }}
+        BUCKET_FILES: ${{ inputs.bucket-files }}
+        AWS_DEFAULT_REGION: auto
+        AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      run: |
+        set -o pipefail
+
+        AWS_ACCESS_KEY_ID=$(curl --silent --show-error --fail --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | jq --raw-output '.result.id')
+        AWS_SECRET_ACCESS_KEY=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut --delimiter=' ' --fields=1)
+        echo "::add-mask::$AWS_SECRET_ACCESS_KEY"
+        export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+        bucket_address="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
+
+        while IFS= read -r bucket_file; do
+          bucket_file=$(echo "$bucket_file" | xargs)
+          [ -z "$bucket_file" ] && continue
+          local_path="$SITE_FOLDER/$bucket_file"
+          repository_hash=$(md5sum "$local_path" | cut --delimiter=' ' --fields=1)
+          # An object the bucket does not hold yet answers with an error, which leaves its hash empty.
+          bucket_hash=$(aws s3api head-object --endpoint-url "$bucket_address" --bucket "$BUCKET" --key "$bucket_file" --query ETag --output text 2>/dev/null | tr --delete '"') || bucket_hash=""
+          if [ "$repository_hash" = "$bucket_hash" ]; then
+            echo "The bucket already holds $bucket_file ($repository_hash)."
+          else
+            echo "Uploading $bucket_file ($repository_hash) over the bucket's copy (${bucket_hash:-none})."
+            aws s3api put-object --endpoint-url "$bucket_address" --bucket "$BUCKET" --key "$bucket_file" --body "$local_path" > /dev/null
+          fi
+        done <<< "$BUCKET_FILES"
+
+    - name: Publish to Cloudflare Pages
+      uses: cloudflare/wrangler-action@v3
+      with:
+        apiToken: ${{ inputs.cloudflare-api-token }}
+        accountId: ${{ inputs.cloudflare-account-id }}
+        command: pages deploy .site-cachebust-published --project-name=${{ inputs.project-name }} --branch=${{ inputs.branch }}
