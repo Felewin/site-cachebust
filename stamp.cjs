@@ -5,6 +5,7 @@
 // - Gives every served file a short hash of its own content, so a changed file gets a new address and an unchanged file keeps its old one.
 // - Writes `cachebust.js`, which holds those hashes and `withCacheBust(path)`, for addresses a page builds while it runs.
 // - Stamps every address a page, a stylesheet, or a web app manifest names with `?v=<hash>`.
+// - Gives each page that runs module scripts an import map, so the modules those scripts import load stamped too.
 // - Adds `_headers` rules that let browsers keep every stamped kind of file for a year.
 // - Warns about a script that names a site file in a load without `withCacheBust`, since that address would carry no stamp.
 // Reads its settings from environment variables (see the settings region), and uses only Node's own modules.
@@ -311,6 +312,63 @@ for (const sitePath of pagePaths)
 
 			return tag.replace(/\bcontent=(["'])(https?:\/\/[^/"']+)(\/[^"']*)\1/i, (match, quote, origin, address) => `content=${quote}${origin}${stamp(address)}${quote}`);
 		}));
+
+	addModuleImportMap(sitePath);
+}
+
+// Gives a page that runs module scripts an import map, which points every script the site serves at its stamped address.
+// - A module names the modules it imports inside its own code, such as `import {x} from './y.js'`, where no page attribute carries a stamp.
+// - The browser looks each imported address up in the page's import map, so every import loads the stamped file, and a module the page also loads by its stamped `src` stays one module.
+// - The map goes just before the page's first module script, since the browser reads an import map only before any module starts loading.
+// - A page that already has an import map keeps its own, with a warning, since the browser takes the first map it meets.
+function addModuleImportMap(sitePath)
+{
+	const stagedPath
+		= join(stageFolder, sitePath);
+
+	const text
+		= readFileSync(stagedPath, 'utf8');
+
+	const firstModuleScript
+		= text.search(/<script\b[^>]*\btype=["']module["']/i);
+
+	if (firstModuleScript === -1)
+	{
+		return;
+	}
+	if (/<script\b[^>]*\btype=["']importmap["']/i.test(text))
+	{
+		warnings.push(`${sitePath} has an import map of its own, so the modules it imports carry no stamps.`);
+		return;
+	}
+
+	// - Each key is a script's address from the site's root, and each value is that address with its stamp.
+	const imports
+		= {};
+
+	for (const [scriptPath, hash] of Object.entries(fileHashes).filter(([path]) => path.endsWith('.js') || path.endsWith('.mjs')))
+	{
+		const address
+			= '/' + scriptPath.split('/').map(encodeURIComponent).join('/');
+
+		imports[address]
+			= stampedAddress(address, hash);
+	}
+
+	// - The map takes the module script's own line and indentation, and the module script moves to the next line.
+	const lineStart
+		= text.lastIndexOf('\n', firstModuleScript) + 1;
+
+	const leadingText
+		= text.slice(lineStart, firstModuleScript);
+
+	const indentation
+		= /^[ \t]*$/.test(leadingText) ? leadingText : '';
+
+	const importMap
+		= `<script type="importmap">${JSON.stringify({imports})}</script>\n${indentation}`;
+
+	writeFileSync(stagedPath, text.slice(0, firstModuleScript) + importMap + text.slice(firstModuleScript));
 }
 
 // 4. Cache lifetimes for every stamped kind of file, after any rules the site wrote itself.

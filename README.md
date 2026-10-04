@@ -47,10 +47,11 @@ The action works on a stamped copy of the site, and the repository's own files s
 1. It hashes every file the site serves.
 2. It writes `cachebust.js`, which holds those hashes and `withCacheBust(path)`.
 3. It stamps every `src`, `href`, and `poster` in each page that names one of the site's files, and each Open Graph and Twitter image. Links to other pages stay unstamped, since pages are checked on every visit.
-4. It stamps icon paths in a web app manifest, and each `url(...)` in a stylesheet.
-5. It adds `_headers` rules that let browsers keep every stamped kind of file for a year, after any rules the site wrote itself.
-6. It warns about a script that loads a site file by a bare address, outside `withCacheBust`.
-7. It uploads bucket files whose content changed, then publishes the stamped copy to Cloudflare Pages.
+4. It gives each page that runs module scripts an import map, which points every script at its stamped address, so the modules those scripts import load stamped too. A page with an import map of its own keeps it, with a warning.
+5. It stamps icon paths in a web app manifest, and each `url(...)` in a stylesheet.
+6. It adds `_headers` rules that let browsers keep every stamped kind of file for a year, after any rules the site wrote itself.
+7. It warns about a script that loads a site file by a bare address, outside `withCacheBust`.
+8. It uploads bucket files whose content changed, then publishes the stamped copy to Cloudflare Pages.
 
 ## Addresses a page builds while it runs
 
