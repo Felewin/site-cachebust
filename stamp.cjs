@@ -51,6 +51,11 @@ const BUCKET_FILES
 const STAMPED_FILE_LIFETIME_SECONDS
 	= 31536000;
 
+// - How long Cloudflare's own edge may keep a stamped file: five minutes, in seconds.
+// - A deploy rolls out across the edge over a few seconds, and an edge still on the deployment before can answer a new stamp with the old file; a short edge lifetime lets that copy heal on its own, while browsers keep their year.
+const STAMPED_FILE_EDGE_LIFETIME_SECONDS
+	= 300;
+
 // - Names Cloudflare Pages reads as settings rather than serving as files, so they carry no stamp.
 const PAGES_SETTINGS_FILES
 	= ['_headers', '_redirects', '_routes.json', '_worker.js'];
@@ -382,9 +387,9 @@ const siteHeaders
 	= existsSync(headersPath) ? readFileSync(headersPath, 'utf8').trimEnd() + '\n\n' : '';
 
 const stampedHeaders
-	= stampedExtensions.map((extension) => `/*${extension}\n  Cache-Control: public, max-age=${STAMPED_FILE_LIFETIME_SECONDS}, immutable`).join('\n\n');
+	= stampedExtensions.map((extension) => `/*${extension}\n  Cache-Control: public, max-age=${STAMPED_FILE_LIFETIME_SECONDS}, immutable\n  CDN-Cache-Control: public, max-age=${STAMPED_FILE_EDGE_LIFETIME_SECONDS}`).join('\n\n');
 
-writeFileSync(headersPath, `${siteHeaders}# Stamped files: every address carries ?v=<hash of the file>, so each one can be kept for a year.\n${stampedHeaders}\n`);
+writeFileSync(headersPath, `${siteHeaders}# Stamped files: every address carries ?v=<hash of the file>, so browsers can keep each one for a year, while Cloudflare's edge keeps it for minutes, healing any copy taken mid-deploy.\n${stampedHeaders}\n`);
 
 // 5. Scripts that load a site file by a bare address would load it without its stamp.
 for (const sitePath of servedPaths.filter((path) => path.endsWith('.js') || path.endsWith('.html')))
