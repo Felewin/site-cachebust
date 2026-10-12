@@ -39,6 +39,8 @@ jobs:
 | `exclude` | no | Paths that are not part of the site, one per line. Names that start with `.` are always left out. |
 | `bucket` | no | An R2 bucket for files over Cloudflare Pages' 25 MiB limit. The site's own worker serves them. |
 | `bucket-files` | no | The files that go to the bucket instead of to Pages, one per line. |
+| `r2-steward-url` | with bucket uploads | The address of the R2 steward the account's apps ask before every save to R2. |
+| `r2-steward-secret` | with bucket uploads | The R2 steward's secret, kept as a repository secret. |
 | `branch` | no | The Pages branch to publish. `main` by default. |
 
 ## What it does
@@ -51,7 +53,8 @@ The action works on a stamped copy of the site, and the repository's own files s
 5. It stamps icon paths in a web app manifest, and each `url(...)` in a stylesheet.
 6. It adds `_headers` rules that let browsers keep every stamped kind of file for a year, after any rules the site wrote itself.
 7. It warns about a script that loads a site file by a bare address, outside `withCacheBust`.
-8. It uploads bucket files whose content changed, then publishes the stamped copy to Cloudflare Pages.
+8. It asks the account's R2 steward about every bucket file whose content changed. One no, at the steward's line of 80% of R2's free monthly allowance, stops the publish before anything is uploaded, and the steward pings its owner.
+9. It uploads those bucket files, then publishes the stamped copy to Cloudflare Pages.
 
 ## Addresses a page builds while it runs
 
