@@ -321,10 +321,26 @@ for (const sitePath of pagePaths)
 	addModuleImportMap(sitePath);
 }
 
+// - Where a tag first appears in a page's text, leaving out any inside an HTML comment, since a commented-out tag never runs; -1 when it never appears.
+function findFirstTag(text, tagPattern)
+{
+	const comments
+		= [...text.matchAll(/<!--[\s\S]*?(-->|$)/g)].map((comment) => [comment.index, comment.index + comment[0].length]);
+
+	for (const tag of text.matchAll(new RegExp(tagPattern.source, 'gi')))
+	{
+		if (!comments.some(([start, end]) => tag.index >= start && tag.index < end))
+		{
+			return tag.index;
+		}
+	}
+	return -1;
+}
+
 // Gives a page that runs module scripts an import map, which points every script the site serves at its stamped address.
 // - A module names the modules it imports inside its own code, such as `import {x} from './y.js'`, where no page attribute carries a stamp.
 // - The browser looks each imported address up in the page's import map, so every import loads the stamped file, and a module the page also loads by its stamped `src` stays one module.
-// - The map goes just before the page's first module script, since the browser reads an import map only before any module starts loading.
+// - The map goes just before the first thing on the page that can start loading a module: its first script of any kind, since a script can preload or import a module as it runs, or its first module preload. A browser that reads only one import map, such as Firefox, ignores a map that arrives after a module has started loading.
 // - A page that already has an import map keeps its own, with a warning, since the browser takes the first map it meets.
 function addModuleImportMap(sitePath)
 {
@@ -334,10 +350,7 @@ function addModuleImportMap(sitePath)
 	const text
 		= readFileSync(stagedPath, 'utf8');
 
-	const firstModuleScript
-		= text.search(/<script\b[^>]*\btype=["']module["']/i);
-
-	if (firstModuleScript === -1)
+	if (findFirstTag(text, /<script\b[^>]*\btype=["']module["']/) === -1)
 	{
 		return;
 	}
@@ -360,12 +373,18 @@ function addModuleImportMap(sitePath)
 			= stampedAddress(address, hash);
 	}
 
-	// - The map takes the module script's own line and indentation, and the module script moves to the next line.
+	// - The map takes the line and indentation of the first script or module preload, which moves to the next line.
+	const scriptOrPreload
+		= [findFirstTag(text, /<script\b/), findFirstTag(text, /<link\b[^>]*\brel=["']?modulepreload\b/)].filter((index) => index !== -1);
+
+	const mapPlace
+		= Math.min(...scriptOrPreload);
+
 	const lineStart
-		= text.lastIndexOf('\n', firstModuleScript) + 1;
+		= text.lastIndexOf('\n', mapPlace) + 1;
 
 	const leadingText
-		= text.slice(lineStart, firstModuleScript);
+		= text.slice(lineStart, mapPlace);
 
 	const indentation
 		= /^[ \t]*$/.test(leadingText) ? leadingText : '';
@@ -373,7 +392,7 @@ function addModuleImportMap(sitePath)
 	const importMap
 		= `<script type="importmap">${JSON.stringify({imports})}</script>\n${indentation}`;
 
-	writeFileSync(stagedPath, text.slice(0, firstModuleScript) + importMap + text.slice(firstModuleScript));
+	writeFileSync(stagedPath, text.slice(0, mapPlace) + importMap + text.slice(mapPlace));
 }
 
 // 4. Cache lifetimes for every stamped kind of file, after any rules the site wrote itself.
