@@ -70,7 +70,7 @@ runs:
 
     # - R2 speaks the S3 protocol, where the token's id is the access key and the SHA-256 hash of the token is the secret key.
     # - The bucket remembers each file's MD5 hash as its ETag. A file whose hash already matches is skipped.
-    # - Before any upload, the account's R2 steward weighs every file that would be uploaded, against its line at 80% of R2's free monthly allowance. One no holds the whole publish, nothing is uploaded nor published, and the steward pings Felewin.
+    # - Before any upload, the account's R2 steward weighs every file that would be uploaded, against its line at 80% of R2's free monthly allowance. One no holds the whole publish, nothing is uploaded nor published, and the steward pings its owner.
     # - The two CHECKSUM settings keep the AWS command line tool from sending newer checksum headers that R2 refuses.
     - name: Fill the bucket
       if: inputs.bucket != ''
@@ -132,7 +132,7 @@ runs:
           if [ "$(printf '%s' "$answer" | jq --raw-output '.isAllowed == true' 2>/dev/null)" != "true" ]; then
             release_reservations "${reservations[@]}"
             reason=$(printf '%s' "$answer" | jq --raw-output '.reason // .error // empty' 2>/dev/null)
-            echo "::error::The R2 steward held $bucket_file (${reason:-no answer}), so nothing was uploaded nor published. At its line, 80% of R2's free monthly allowance, it pings Felewin."
+            echo "::error::The R2 steward held $bucket_file (${reason:-no answer}), so nothing was uploaded nor published. At its line, 80% of R2's free monthly allowance, it pings its owner."
             exit 1
           fi
           reservations+=("$(printf '%s' "$answer" | jq --raw-output '.reservationId')")
