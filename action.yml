@@ -43,17 +43,36 @@ inputs:
 runs:
   using: composite
   steps:
+    # - The last publish's cachebust.js, kept in the repository's Actions cache, for a site whose live address answers only behind a sign-in.
+    - name: Restore the last published versions
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/site-cachebust-last
+        key: site-cachebust-${{ inputs.project-name }}-${{ github.run_id }}
+        restore-keys: site-cachebust-${{ inputs.project-name }}-
+
     # - The live site's own cachebust.js names each file's hash and version there, so an unchanged file keeps its version, and browsers keep their copy across the deploy.
-    # - The fresh query reaches past any copy the edge holds. A site that has never published, or answers with no cachebust.js, gives every file this deploy's version.
+    # - The project's own address comes from Cloudflare, since a project whose name was taken lives at a pages.dev address of its own; the fresh query reaches past any copy the edge holds.
+    # - A live address that answers with no tables, such as one behind a sign-in, gives way to the last publish's copy; with neither, every file takes this deploy's version.
     - name: Read the live versions
       shell: bash
       env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
         PROJECT_NAME: ${{ inputs.project-name }}
         LIVE_RUNTIME_FILE: ${{ runner.temp }}/live-cachebust.js
+        LAST_RUNTIME_FILE: ${{ runner.temp }}/site-cachebust-last/cachebust.js
       run: |
-        if ! curl --silent --show-error --fail --max-time 30 --output "$LIVE_RUNTIME_FILE" "https://$PROJECT_NAME.pages.dev/cachebust.js?fresh=$(date +%s)"; then
+        address=$(curl --silent --fail --max-time 30 --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME" | jq --raw-output '.result.subdomain // empty') || address=""
+        address=${address:-$PROJECT_NAME.pages.dev}
+        if ! curl --silent --fail --max-time 30 --output "$LIVE_RUNTIME_FILE" "https://$address/cachebust.js?fresh=$(date +%s)" || ! grep --quiet '^var FILE_VERSIONS = ' "$LIVE_RUNTIME_FILE"; then
           rm -f "$LIVE_RUNTIME_FILE"
-          echo "The live site holds no cachebust.js, so every file takes this deploy's version."
+          if [ -f "$LAST_RUNTIME_FILE" ]; then
+            cp "$LAST_RUNTIME_FILE" "$LIVE_RUNTIME_FILE"
+            echo "https://$address answers with no versions, so the versions come from the last publish's copy."
+          else
+            echo "https://$address answers with no versions, and no publish's copy is kept, so every file takes this deploy's version."
+          fi
         fi
 
     # - The stamped copy is written inside the workspace, so a site's own wrangler.toml can name it as its output folder.
@@ -154,3 +173,16 @@ runs:
         apiToken: ${{ inputs.cloudflare-api-token }}
         accountId: ${{ inputs.cloudflare-account-id }}
         command: pages deploy .site-cachebust-published --project-name=${{ inputs.project-name }} --branch=${{ inputs.branch }}
+
+    # - Once the publish has landed, its cachebust.js is kept for the next deploy, which reads it when the live address answers only behind a sign-in.
+    - name: Keep the published versions
+      shell: bash
+      run: |
+        mkdir -p "${{ runner.temp }}/site-cachebust-last"
+        cp "${{ github.workspace }}/.site-cachebust-published/cachebust.js" "${{ runner.temp }}/site-cachebust-last/cachebust.js"
+
+    - name: Save the published versions
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/site-cachebust-last
+        key: site-cachebust-${{ inputs.project-name }}-${{ github.run_id }}

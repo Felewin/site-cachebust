@@ -292,11 +292,15 @@ const fileVersions
 const liveHashes
 	= readLiveTable('FILE_HASHES', {});
 
+// - A version read from the live site becomes a folder name, so only a plain name of letters and digits is taken, such as a commit's short hash.
+const isVersionName
+	= (value) => typeof value === 'string' && /^[0-9a-z]{1,40}$/i.test(value);
+
 const liveVersions
-	= readLiveTable('FILE_VERSIONS', {});
+	= Object.fromEntries(Object.entries(readLiveTable('FILE_VERSIONS', {})).filter(([, version]) => isVersionName(version)));
 
 const liveVersionOrder
-	= readLiveTable('VERSION_ORDER', []);
+	= [].concat(readLiveTable('VERSION_ORDER', [])).filter(isVersionName);
 
 let stampedReferenceCount
 	= 0;
@@ -439,8 +443,12 @@ for (const sitePath of stylesheetPaths)
 fileVersions[RUNTIME_FILE]
 	= COMMIT;
 
+// - Every version in use, oldest first as the live site ordered them, any the live order missed next, and this deploy's last, so each gets its rule.
+const versionsInUse
+	= [...new Set(Object.values(fileVersions))].filter((version) => version !== COMMIT);
+
 const versionOrder
-	= [...liveVersionOrder.filter((version) => version !== COMMIT && Object.values(fileVersions).includes(version)), COMMIT];
+	= [...liveVersionOrder.filter((version) => versionsInUse.includes(version)), ...versionsInUse.filter((version) => !liveVersionOrder.includes(version)), COMMIT];
 
 const runtimeTemplate
 	= readFileSync(join(__dirname, 'cachebust-runtime.js'), 'utf8');
