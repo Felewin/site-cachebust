@@ -1,5 +1,5 @@
 name: site-cachebust
-description: Stamp every file address of a static site with that file's content hash, set year-long cache lifetimes, and publish the site to Cloudflare Pages.
+description: Publish every file of a static site again in a version folder that changes with its content, set year-long cache lifetimes for those folders, and publish the site to Cloudflare Pages.
 
 inputs:
   project-name:
@@ -43,12 +43,26 @@ inputs:
 runs:
   using: composite
   steps:
+    # - The live site's own cachebust.js names each file's hash and version there, so an unchanged file keeps its version, and browsers keep their copy across the deploy.
+    # - The fresh query reaches past any copy the edge holds. A site that has never published, or answers with no cachebust.js, gives every file this deploy's version.
+    - name: Read the live versions
+      shell: bash
+      env:
+        PROJECT_NAME: ${{ inputs.project-name }}
+        LIVE_RUNTIME_FILE: ${{ runner.temp }}/live-cachebust.js
+      run: |
+        if ! curl --silent --show-error --fail --max-time 30 --output "$LIVE_RUNTIME_FILE" "https://$PROJECT_NAME.pages.dev/cachebust.js?fresh=$(date +%s)"; then
+          rm -f "$LIVE_RUNTIME_FILE"
+          echo "The live site holds no cachebust.js, so every file takes this deploy's version."
+        fi
+
     # - The stamped copy is written inside the workspace, so a site's own wrangler.toml can name it as its output folder.
     - name: Stamp the site
       shell: bash
       env:
         SITE_FOLDER: ${{ inputs.site-folder }}
         STAGE_FOLDER: ${{ github.workspace }}/.site-cachebust-published
+        LIVE_RUNTIME_FILE: ${{ runner.temp }}/live-cachebust.js
         EXCLUDE: ${{ inputs.exclude }}
         BUCKET_FILES: ${{ inputs.bucket-files }}
         COMMIT: ${{ github.sha }}
