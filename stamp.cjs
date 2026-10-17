@@ -569,9 +569,9 @@ const siteHeaders
 const versionHeaders
 	= versionOrder.map((version) => `/${VERSION_FOLDER}/${version}/*\n  Cache-Control: public, max-age=${STAMPED_FILE_LIFETIME_SECONDS}, immutable\n  CDN-Cache-Control: public, max-age=${STAMPED_FILE_EDGE_LIFETIME_SECONDS}`).join('\n\n');
 
-writeFileSync(join(stageFolder, '_headers'), `${siteHeaders}# Versioned files: each lives at /${VERSION_FOLDER}/<version>/<path>, which changes whenever its content does, so browsers can keep it for a year, while Cloudflare's edge keeps it for minutes, healing any copy taken mid-deploy. A file at its plain address is checked on every visit.\n${versionHeaders}\n`);
+writeFileSync(join(stageFolder, '_headers'), `${siteHeaders}# Versioned files: each lives at /${VERSION_FOLDER}/<version>/<path>, which changes whenever its content does, so browsers can keep it for a year, while Cloudflare's edge keeps it for minutes, healing any copy taken mid-deploy. A file at its plain address keeps only the short lifetime Cloudflare gives a file no rule names.\n${versionHeaders}\n`);
 
-// 8. Scripts that load a site file by a bare address would load it at its plain address, checked on every visit.
+// 8. Scripts that load a site file by a bare address would load it at its plain address, which keeps only a short lifetime.
 for (const sitePath of servedPaths.filter((path) => path.endsWith('.js') || path.endsWith('.html')))
 {
 	const lines
@@ -595,7 +595,7 @@ for (const sitePath of servedPaths.filter((path) => path.endsWith('.js') || path
 
 			if (target !== undefined && fileHashes[target] !== undefined && !isMarkupAttribute)
 			{
-				warnings.push(`${sitePath}:${index + 1} loads ${address} without withCacheBust, so it is checked on every visit rather than kept for a year.`);
+				warnings.push(`${sitePath}:${index + 1} loads ${address} without withCacheBust, so it misses the year a version gives it.`);
 			}
 		}
 	});
