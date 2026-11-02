@@ -43,7 +43,7 @@ inputs:
 runs:
   using: composite
   steps:
-    # - The last publish's cachebust.js, kept in the repository's Actions cache, for a site whose live address answers only behind a sign-in.
+    # - The last publish's kept copy, from the repository's Actions cache: its cachebust.js, for a site whose live address answers only behind a sign-in, and the scripts of each version it served in the last day, which this publish carries.
     - name: Restore the last published versions
       uses: actions/cache/restore@v4
       with:
@@ -82,6 +82,8 @@ runs:
         SITE_FOLDER: ${{ inputs.site-folder }}
         STAGE_FOLDER: ${{ github.workspace }}/.site-cachebust-published
         LIVE_RUNTIME_FILE: ${{ runner.temp }}/live-cachebust.js
+        KEPT_FOLDER: ${{ runner.temp }}/site-cachebust-last
+        NEXT_KEPT_FOLDER: ${{ runner.temp }}/site-cachebust-next
         EXCLUDE: ${{ inputs.exclude }}
         BUCKET_FILES: ${{ inputs.bucket-files }}
         COMMIT: ${{ github.sha }}
@@ -174,12 +176,15 @@ runs:
         accountId: ${{ inputs.cloudflare-account-id }}
         command: pages deploy .site-cachebust-published --project-name=${{ inputs.project-name }} --branch=${{ inputs.branch }}
 
-    # - Once the publish has landed, its cachebust.js is kept for the next deploy, which reads it when the live address answers only behind a sign-in.
+    # - Once the publish has landed, its kept copy takes the last one's place for the next deploy: its cachebust.js, read when the live address answers only behind a sign-in, and the scripts the stamping set aside.
+    # - The cache is saved from the same folder it is restored to, since the Actions cache matches a saved copy by its folder too.
     - name: Keep the published versions
       shell: bash
       run: |
-        mkdir -p "${{ runner.temp }}/site-cachebust-last"
-        cp "${{ github.workspace }}/.site-cachebust-published/cachebust.js" "${{ runner.temp }}/site-cachebust-last/cachebust.js"
+        mkdir -p "${{ runner.temp }}/site-cachebust-next"
+        cp "${{ github.workspace }}/.site-cachebust-published/cachebust.js" "${{ runner.temp }}/site-cachebust-next/cachebust.js"
+        rm -rf "${{ runner.temp }}/site-cachebust-last"
+        mv "${{ runner.temp }}/site-cachebust-next" "${{ runner.temp }}/site-cachebust-last"
 
     - name: Save the published versions
       uses: actions/cache/save@v4

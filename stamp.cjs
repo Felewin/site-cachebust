@@ -7,6 +7,7 @@
 // - Writes `cachebust.js`, which holds those hashes and versions and `withCacheBust(path)`, for addresses a page builds while it runs.
 // - Points every address a page, a stylesheet, or a web app manifest names at its versioned copy.
 // - Gives each page that runs module scripts an import map, so the modules those scripts import load versioned too.
+// - Publishes again the scripts of each version the site served in the last day, from the last publish's kept copy, so a page left open across a publish still loads each module it imports later, and writes this publish's kept copy.
 // - Adds one `_headers` rule for each version folder, letting browsers keep everything in it for a year.
 // - Warns about a script that names a site file in a load without `withCacheBust`, since that address would carry no version.
 // Reads its settings from environment variables (see the settings region), and uses only Node's own modules.
@@ -18,7 +19,7 @@
 // #region dependencies
 const {createHash}
 	= require('node:crypto');
-const {copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync}
+const {copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync}
 	= require('node:fs');
 const {dirname, join, posix}
 	= require('node:path');
@@ -43,6 +44,14 @@ const COMMIT
 // - The live site's own `cachebust.js`, fetched before stamping, which names each file's hash and version on the live site. When it is missing, every file takes this deploy's version.
 const LIVE_RUNTIME_FILE
 	= process.env.LIVE_RUNTIME_FILE || '';
+
+// - The last publish's kept copy, restored from the repository's Actions cache, which holds the scripts of each version it served in the last day. When it is missing, no scripts are carried.
+const KEPT_FOLDER
+	= process.env.KEPT_FOLDER || '';
+
+// - Where this publish's kept copy is written, for the action to keep once the publish lands. When it is not set, none is written.
+const NEXT_KEPT_FOLDER
+	= process.env.NEXT_KEPT_FOLDER || '';
 
 // - Paths in the site folder that are not part of the site, one per line.
 const EXCLUDED_PATHS
@@ -75,6 +84,17 @@ const PAGES_SETTINGS_FILES
 // - The file this script writes into the staged site for the pages to load.
 const RUNTIME_FILE
 	= 'cachebust.js';
+
+// - In a kept copy, the folder that holds each carried version's scripts, as `<version>/<path>`, and the file that says when each stopped being served, `null` for the one the publish serves.
+const KEPT_SCRIPTS_FOLDER
+	= 'scripts';
+
+const KEPT_SCRIPTS_FILE
+	= 'scripts.json';
+
+// - How long a version's scripts are published again after they stop being served: one day, in milliseconds.
+const CARRIED_SCRIPTS_LIFETIME_MILLISECONDS
+	= 24 * 60 * 60 * 1000;
 
 // - Script calls that load a file from an address, for the bare-address warning.
 const LOADING_CALL_PATTERN
@@ -224,6 +244,30 @@ function readLiveTable(name, empty)
 	catch
 	{
 		return empty;
+	}
+}
+
+// Reads a table the last publish's kept copy holds, such as `scripts.json`, or an empty table when the kept copy has none or it cannot be read.
+function readKeptTable(name)
+{
+	const tablePath
+		= join(KEPT_FOLDER, name);
+
+	if (KEPT_FOLDER === '' || !existsSync(tablePath))
+	{
+		return {};
+	}
+
+	try
+	{
+		const table
+			= JSON.parse(readFileSync(tablePath, 'utf8'));
+
+		return table !== null && typeof table === 'object' && !Array.isArray(table) ? table : {};
+	}
+	catch
+	{
+		return {};
 	}
 }
 
@@ -472,7 +516,76 @@ for (const [sitePath, version] of Object.entries(fileVersions))
 	copyFileSync(join(stageFolder, sitePath), versionedPath);
 }
 
-// 6. Pages are stamped last, since they name everything else, the runtime file included.
+// 6. The scripts of each version the site served in the last day are published again in their version folders, since a page left open across a publish still names that version in its import map and its scripts' relative imports, so it still loads each module it imports later.
+// - The last publish's kept copy holds those scripts, and when each version stopped being served. The version it served stops now, unless this publish serves it still.
+// - The newest are carried first. A version that shares no folder with this publish needs a `_headers` rule of its own, so only as many are carried as the rules leave room for.
+const scriptVersion
+	= scriptPaths.length > 0 ? fileVersions[scriptPaths[0]] : undefined;
+
+const publishTime
+	= Date.now();
+
+// - A version the kept copy names becomes a folder name, so only a plain name of letters and digits whose scripts the kept copy holds is taken.
+const keptScriptTimes
+	= Object.entries(readKeptTable(KEPT_SCRIPTS_FILE))
+		.filter(([version]) => isVersionName(version) && version !== scriptVersion && existsSync(join(KEPT_FOLDER, KEPT_SCRIPTS_FOLDER, version)))
+		.map(([version, stoppedAt]) => [version, stoppedAt === null ? publishTime : Date.parse(stoppedAt)])
+		.filter(([, stoppedTime]) => publishTime - stoppedTime < CARRIED_SCRIPTS_LIFETIME_MILLISECONDS)
+		.sort(([, earlierTime], [, laterTime]) => laterTime - earlierTime);
+
+// - When each carried version stopped being served, as the kept copy will say it.
+const carriedScriptTimes
+	= {};
+
+let freeRuleCount
+	= Math.max(0, versionLimit - versionOrder.length);
+
+for (const [version, stoppedTime] of keptScriptTimes)
+{
+	const needsOwnRule
+		= !versionOrder.includes(version);
+
+	if (needsOwnRule && freeRuleCount === 0)
+	{
+		continue;
+	}
+	if (needsOwnRule)
+	{
+		freeRuleCount--;
+	}
+
+	// - A file this publish already holds at the same address stays as it is.
+	cpSync(join(KEPT_FOLDER, KEPT_SCRIPTS_FOLDER, version), join(stageFolder, VERSION_FOLDER, version), {recursive: true, force: false});
+	carriedScriptTimes[version]
+		= new Date(stoppedTime).toISOString();
+}
+
+const carriedVersions
+	= Object.keys(carriedScriptTimes);
+
+// - This publish's kept copy holds the scripts it carried, and its own scripts, which it serves from now on.
+if (NEXT_KEPT_FOLDER !== '')
+{
+	rmSync(NEXT_KEPT_FOLDER, {recursive: true, force: true});
+	mkdirSync(NEXT_KEPT_FOLDER, {recursive: true});
+
+	for (const version of carriedVersions)
+	{
+		cpSync(join(KEPT_FOLDER, KEPT_SCRIPTS_FOLDER, version), join(NEXT_KEPT_FOLDER, KEPT_SCRIPTS_FOLDER, version), {recursive: true});
+	}
+	for (const sitePath of scriptPaths)
+	{
+		const keptPath
+			= join(NEXT_KEPT_FOLDER, KEPT_SCRIPTS_FOLDER, scriptVersion, sitePath);
+
+		mkdirSync(dirname(keptPath), {recursive: true});
+		copyFileSync(join(stageFolder, VERSION_FOLDER, scriptVersion, sitePath), keptPath);
+	}
+
+	writeFileSync(join(NEXT_KEPT_FOLDER, KEPT_SCRIPTS_FILE), JSON.stringify({...carriedScriptTimes, ...(scriptVersion === undefined ? {} : {[scriptVersion]: null})}));
+}
+
+// 7. Pages are stamped last, since they name everything else, the runtime file included.
 for (const sitePath of pagePaths)
 {
 	stampFile(sitePath, (text, stamp) => text
@@ -561,17 +674,17 @@ function addModuleImportMap(sitePath)
 	writeFileSync(stagedPath, text.slice(0, mapPlace) + importMap + text.slice(mapPlace));
 }
 
-// 7. Cache lifetimes for each version folder, after any rules the site wrote itself.
+// 8. Cache lifetimes for each version folder, the carried ones included, after any rules the site wrote itself.
 // - Cloudflare applies a rule by its path even to a file the deployment does not hold, answering with the site's home page; a rule for each version folder this deploy holds, rather than for every file of a kind, keeps such an answer out of a browser's year-long cache, since an older deployment has no rule for a newer folder.
 const siteHeaders
 	= siteHeadersText.trim() !== '' ? siteHeadersText.trimEnd() + '\n\n' : '';
 
 const versionHeaders
-	= versionOrder.map((version) => `/${VERSION_FOLDER}/${version}/*\n  Cache-Control: public, max-age=${STAMPED_FILE_LIFETIME_SECONDS}, immutable\n  CDN-Cache-Control: public, max-age=${STAMPED_FILE_EDGE_LIFETIME_SECONDS}`).join('\n\n');
+	= [...versionOrder, ...carriedVersions.filter((version) => !versionOrder.includes(version))].map((version) => `/${VERSION_FOLDER}/${version}/*\n  Cache-Control: public, max-age=${STAMPED_FILE_LIFETIME_SECONDS}, immutable\n  CDN-Cache-Control: public, max-age=${STAMPED_FILE_EDGE_LIFETIME_SECONDS}`).join('\n\n');
 
 writeFileSync(join(stageFolder, '_headers'), `${siteHeaders}# Versioned files: each lives at /${VERSION_FOLDER}/<version>/<path>, which changes whenever its content does, so browsers can keep it for a year, while Cloudflare's edge keeps it for minutes, healing any copy taken mid-deploy. A file at its plain address keeps only the short lifetime Cloudflare gives a file no rule names.\n${versionHeaders}\n`);
 
-// 8. Scripts that load a site file by a bare address would load it at its plain address, which keeps only a short lifetime.
+// 9. Scripts that load a site file by a bare address would load it at its plain address, which keeps only a short lifetime.
 for (const sitePath of servedPaths.filter((path) => path.endsWith('.js') || path.endsWith('.html')))
 {
 	const lines
@@ -609,7 +722,7 @@ for (const sitePath of servedPaths.filter((path) => path.endsWith('.js') || path
 const keptCount
 	= Object.values(fileVersions).filter((version) => version !== COMMIT).length;
 
-console.log(`Stamped ${Object.keys(fileHashes).length} files and ${stampedReferenceCount} references with commit ${COMMIT}: ${keptCount} kept their live versions, ${Object.keys(fileVersions).length - keptCount} took this deploy's, across ${versionOrder.length} version folders${foldedVersions.size > 0 ? `, after folding ${foldedVersions.size} of the oldest into this deploy's` : ''}.`);
+console.log(`Stamped ${Object.keys(fileHashes).length} files and ${stampedReferenceCount} references with commit ${COMMIT}: ${keptCount} kept their live versions, ${Object.keys(fileVersions).length - keptCount} took this deploy's, across ${versionOrder.length} version folders${foldedVersions.size > 0 ? `, after folding ${foldedVersions.size} of the oldest into this deploy's` : ''}${carriedVersions.length > 0 ? `, and carried the scripts of ${carriedVersions.length} earlier version${carriedVersions.length === 1 ? '' : 's'}: ${carriedVersions.join(', ')}` : ''}.`);
 for (const warning of warnings)
 {
 	console.log(`::warning::${warning}`);
