@@ -702,11 +702,18 @@ for (const sitePath of servedPaths.filter((path) => path.endsWith('.js') || path
 			const target
 				= sitePathOf(address, sitePath);
 
+			const escapedAddress
+				= address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 			// - An HTML attribute such as `src="..."` is stamped above, so only addresses in script code are bare.
 			const isMarkupAttribute
-				= new RegExp(`(src|href|poster)=["']${address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`).test(line);
+				= new RegExp(`(src|href|poster)=["']${escapedAddress}["']`).test(line);
 
-			if (target !== undefined && fileHashes[target] !== undefined && !isMarkupAttribute)
+			// - A script's relative import of another script resolves inside its own version folder, since the importing module runs from there and the site's scripts move together.
+			const isRelativeScriptImport
+				= sitePath.endsWith('.js') && /^\.\.?\//.test(address) && /\.m?js$/.test(target ?? '') && new RegExp(`import\\(\\s*["'\`]${escapedAddress}["'\`]`).test(line);
+
+			if (target !== undefined && fileHashes[target] !== undefined && !isMarkupAttribute && !isRelativeScriptImport)
 			{
 				warnings.push(`${sitePath}:${index + 1} loads ${address} without withCacheBust, so it misses the year a version gives it.`);
 			}
