@@ -15,6 +15,10 @@ inputs:
     description: The folder that holds the site, relative to the repository root.
     required: false
     default: .
+  wrangler-folder:
+    description: The folder Cloudflare's deploy tool runs from, relative to the repository root, where it finds a site's own wrangler.toml and functions folder.
+    required: false
+    default: .
   exclude:
     description: Paths in the site folder that are not part of the site, one per line. Names that start with "." are always left out.
     required: false
@@ -169,12 +173,14 @@ runs:
           fi
         done
 
+    # - Wrangler runs from the wrangler folder, so a site's own wrangler.toml and functions folder publish with it, and it is handed the stamped copy by its full path.
     - name: Publish to Cloudflare Pages
       uses: cloudflare/wrangler-action@v3
       with:
         apiToken: ${{ inputs.cloudflare-api-token }}
         accountId: ${{ inputs.cloudflare-account-id }}
-        command: pages deploy .site-cachebust-published --project-name=${{ inputs.project-name }} --branch=${{ inputs.branch }}
+        workingDirectory: ${{ inputs.wrangler-folder }}
+        command: pages deploy "${{ github.workspace }}/.site-cachebust-published" --project-name=${{ inputs.project-name }} --branch=${{ inputs.branch }}
 
     # - Once the publish has landed, its kept copy takes the last one's place for the next deploy: its cachebust.js, read when the live address answers only behind a sign-in, and the scripts the stamping set aside.
     # - The cache is saved from the same folder it is restored to, since the Actions cache matches a saved copy by its folder too.

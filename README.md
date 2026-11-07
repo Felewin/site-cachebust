@@ -36,6 +36,7 @@ jobs:
 | `cloudflare-api-token` | yes | A token that can publish to Cloudflare Pages, and write items in the bucket when one is used. |
 | `cloudflare-account-id` | yes | The Cloudflare account that holds the project. |
 | `site-folder` | no | The folder that holds the site. The repository root by default. |
+| `wrangler-folder` | no | The folder Cloudflare's deploy tool runs from, where it finds a site's own `wrangler.toml` and `functions` folder. The repository root by default. |
 | `exclude` | no | Paths that are not part of the site, one per line. Names that start with `.` are always left out. |
 | `bucket` | no | An R2 bucket for files over Cloudflare Pages' 25 MiB limit. The site's own worker serves them. |
 | `bucket-files` | no | The files that go to the bucket instead of to Pages, one per line. |
@@ -83,3 +84,5 @@ The stamped copy is written to `.site-cachebust-published` in the workspace. A s
 ```toml
 pages_build_output_dir = ".site-cachebust-published"
 ```
+
+A site in a folder of a larger repository names that folder as its `wrangler-folder`, so its `wrangler.toml` and `functions` folder publish with it. Its `wrangler.toml` then names the stamped copy by its path from that folder, such as `../../.site-cachebust-published`, and its `exclude` leaves out `functions` and `wrangler.toml`, which are not files the site serves.
