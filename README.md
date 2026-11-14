@@ -37,7 +37,7 @@ jobs:
 | `cloudflare-account-id` | yes | The Cloudflare account that holds the project. |
 | `site-folder` | no | The folder that holds the site. The repository root by default. |
 | `wrangler-folder` | no | The folder Cloudflare's deploy tool runs from, where it finds a site's own `wrangler.toml` and `functions` folder. The repository root by default. |
-| `exclude` | no | Paths that are not part of the site, one per line. Names that start with `.` are always left out. |
+| `exclude` | no | Paths that are not part of the site, one per line. Names that start with `.`, and `node_modules`, are always left out. |
 | `bucket` | no | An R2 bucket for files over Cloudflare Pages' 25 MiB limit. The site's own worker serves them. |
 | `bucket-files` | no | The files that go to the bucket instead of to Pages, one per line. |
 | `r2-steward-url` | with bucket uploads | The address of the R2 steward the account's apps ask before every save to R2. |

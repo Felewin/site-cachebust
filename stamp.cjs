@@ -122,12 +122,13 @@ function hashOfFile(path)
 
 // Tells whether a site path is left out of the published copy.
 // - Names that start with "." are never part of a site, such as `.git`, `.github`, and `.gitignore`.
+// - A `node_modules` folder is never part of a site either, at any depth, since a workflow's earlier steps may install packages beside the site.
 function isExcluded(sitePath)
 {
 	const firstSegment
 		= sitePath.split('/')[0];
 
-	if (firstSegment.startsWith('.'))
+	if (firstSegment.startsWith('.') || sitePath.split('/').includes('node_modules'))
 	{
 		return true;
 	}

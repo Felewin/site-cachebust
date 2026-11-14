@@ -20,7 +20,7 @@ inputs:
     required: false
     default: .
   exclude:
-    description: Paths in the site folder that are not part of the site, one per line. Names that start with "." are always left out.
+    description: Paths in the site folder that are not part of the site, one per line. Names that start with ".", and node_modules, are always left out.
     required: false
     default: ""
   bucket:
