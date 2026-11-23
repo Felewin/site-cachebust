@@ -66,18 +66,7 @@ runs:
         PROJECT_NAME: ${{ inputs.project-name }}
         LIVE_RUNTIME_FILE: ${{ runner.temp }}/live-cachebust.js
         LAST_RUNTIME_FILE: ${{ runner.temp }}/site-cachebust-last/cachebust.js
-      run: |
-        address=$(curl --silent --fail --max-time 30 --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME" | jq --raw-output '.result.subdomain // empty') || address=""
-        address=${address:-$PROJECT_NAME.pages.dev}
-        if ! curl --silent --fail --max-time 30 --output "$LIVE_RUNTIME_FILE" "https://$address/cachebust.js?fresh=$(date +%s)" || ! grep --quiet '^var FILE_VERSIONS = ' "$LIVE_RUNTIME_FILE"; then
-          rm -f "$LIVE_RUNTIME_FILE"
-          if [ -f "$LAST_RUNTIME_FILE" ]; then
-            cp "$LAST_RUNTIME_FILE" "$LIVE_RUNTIME_FILE"
-            echo "https://$address answers with no versions, so the versions come from the last publish's copy."
-          else
-            echo "https://$address answers with no versions, and no publish's copy is kept, so every file takes this deploy's version."
-          fi
-        fi
+      run: node "${{ github.action_path }}/read-live-versions.cjs"
 
     # - The stamped copy is written inside the workspace, so a site's own wrangler.toml can name it as its output folder.
     - name: Stamp the site
@@ -96,7 +85,6 @@ runs:
     # - R2 speaks the S3 protocol, where the token's id is the access key and the SHA-256 hash of the token is the secret key.
     # - The bucket remembers each file's MD5 hash as its ETag. A file whose hash already matches is skipped.
     # - Before any upload, the account's R2 steward weighs every file that would be uploaded, against its line at 80% of R2's free monthly allowance. One no holds the whole publish, nothing is uploaded nor published, and the steward pings its owner.
-    # - The two CHECKSUM settings keep the AWS command line tool from sending newer checksum headers that R2 refuses.
     - name: Fill the bucket
       if: inputs.bucket != ''
       shell: bash
@@ -109,69 +97,7 @@ runs:
         BUCKET_FILES: ${{ inputs.bucket-files }}
         R2_STEWARD_URL: ${{ inputs.r2-steward-url }}
         R2_STEWARD_SECRET: ${{ inputs.r2-steward-secret }}
-        AWS_DEFAULT_REGION: auto
-        AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-        AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-      run: |
-        set -o pipefail
-
-        AWS_ACCESS_KEY_ID=$(curl --silent --show-error --fail --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | jq --raw-output '.result.id')
-        AWS_SECRET_ACCESS_KEY=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut --delimiter=' ' --fields=1)
-        echo "::add-mask::$AWS_SECRET_ACCESS_KEY"
-        export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-        bucket_address="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
-
-        # - First, the files whose content differs from the bucket's copy.
-        uploads=()
-        while IFS= read -r bucket_file; do
-          bucket_file=$(echo "$bucket_file" | xargs)
-          [ -z "$bucket_file" ] && continue
-          local_path="$SITE_FOLDER/$bucket_file"
-          repository_hash=$(md5sum "$local_path" | cut --delimiter=' ' --fields=1)
-          # An object the bucket does not hold yet answers with an error, which leaves its hash empty.
-          bucket_hash=$(aws s3api head-object --endpoint-url "$bucket_address" --bucket "$BUCKET" --key "$bucket_file" --query ETag --output text 2>/dev/null | tr --delete '"') || bucket_hash=""
-          if [ "$repository_hash" = "$bucket_hash" ]; then
-            echo "The bucket already holds $bucket_file ($repository_hash)."
-          else
-            echo "The bucket's copy of $bucket_file (${bucket_hash:-none}) differs from $repository_hash."
-            uploads+=("$bucket_file")
-          fi
-        done <<< "$BUCKET_FILES"
-
-        # - Gives back yeses whose uploads never happened.
-        release_reservations() {
-          for reservation in "$@"; do
-            curl --silent --output /dev/null --max-time 30 --request POST --header "Authorization: Bearer $R2_STEWARD_SECRET" --header 'Content-Type: application/json' --data "$(jq --null-input --arg id "$reservation" '{reservationId: $id}')" "$R2_STEWARD_URL/release" || true
-          done
-        }
-
-        # - Then the steward weighs every upload, before any is made.
-        reservations=()
-        if [ ${#uploads[@]} -gt 0 ] && { [ -z "$R2_STEWARD_URL" ] || [ -z "$R2_STEWARD_SECRET" ]; }; then
-          echo "::error::Uploading to the bucket asks the R2 steward first, so pass r2-steward-url and r2-steward-secret. Nothing was uploaded nor published."
-          exit 1
-        fi
-        for bucket_file in "${uploads[@]}"; do
-          ask=$(jq --null-input --arg app "The $PROJECT_NAME site" --arg what "the bucket file $bucket_file" --argjson bytes "$(stat --format=%s "$SITE_FOLDER/$bucket_file")" --arg fallback "the $PROJECT_NAME publish stops, holding back this file, and the site keeps its last published version" '{app: $app, what: $what, bytes: $bytes, fallback: $fallback}')
-          answer=$(curl --silent --show-error --max-time 30 --request POST --header "Authorization: Bearer $R2_STEWARD_SECRET" --header 'Content-Type: application/json' --data "$ask" "$R2_STEWARD_URL/ask") || answer=''
-          if [ "$(printf '%s' "$answer" | jq --raw-output '.isAllowed == true' 2>/dev/null)" != "true" ]; then
-            release_reservations "${reservations[@]}"
-            reason=$(printf '%s' "$answer" | jq --raw-output '.reason // .error // empty' 2>/dev/null)
-            echo "::error::The R2 steward held $bucket_file (${reason:-no answer}), so nothing was uploaded nor published. At its line, 80% of R2's free monthly allowance, it pings its owner."
-            exit 1
-          fi
-          reservations+=("$(printf '%s' "$answer" | jq --raw-output '.reservationId')")
-        done
-
-        # - Last, the uploads themselves. A failed upload gives back the yeses of the files after it.
-        for index in "${!uploads[@]}"; do
-          bucket_file=${uploads[$index]}
-          echo "Uploading $bucket_file."
-          if ! aws s3api put-object --endpoint-url "$bucket_address" --bucket "$BUCKET" --key "$bucket_file" --body "$SITE_FOLDER/$bucket_file" > /dev/null; then
-            release_reservations "${reservations[@]:$((index + 1))}"
-            exit 1
-          fi
-        done
+      run: node "${{ github.action_path }}/fill-bucket.cjs"
 
     # - Wrangler runs from the wrangler folder, so a site's own wrangler.toml and functions folder publish with it, and it is handed the stamped copy by its full path.
     - name: Publish to Cloudflare Pages
