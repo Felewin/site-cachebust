@@ -15,8 +15,6 @@ const {copyFileSync, existsSync, rmSync, writeFileSync}
 // #endregion
 
 
-
-
 // #region settings
 const CLOUDFLARE_API_TOKEN
 	= process.env.CLOUDFLARE_API_TOKEN;
@@ -39,8 +37,6 @@ const LAST_RUNTIME_FILE
 const REQUEST_TIMEOUT_MILLISECONDS
 	= 30_000;
 // #endregion
-
-
 
 
 // #region reading
@@ -88,8 +84,6 @@ async function readLiveRuntime(address)
 // #endregion
 
 
-
-
 // #region run
 async function main()
 {
@@ -115,9 +109,8 @@ async function main()
 	}
 }
 
-main().catch((error) =>
-{
-	console.log(`::error::${error.message}`);
-	process.exit(1);
-});
+main().catch((error) =>	{
+							console.log(`::error::${error.message}`);
+							process.exit(1);
+						});
 // #endregion

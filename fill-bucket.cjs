@@ -19,8 +19,6 @@ const {createReadStream, readFileSync, statSync}
 // #endregion
 
 
-
-
 // #region settings
 const CLOUDFLARE_API_TOKEN
 	= process.env.CLOUDFLARE_API_TOKEN;
@@ -55,8 +53,6 @@ const STEWARD_TIMEOUT_MILLISECONDS
 const REGION
 	= 'auto';
 // #endregion
-
-
 
 
 // #region signing
@@ -112,8 +108,6 @@ function signedHeaders(method, path, credentials)
 // #endregion
 
 
-
-
 // #region the bucket
 function objectAddress(key)
 {
@@ -152,16 +146,13 @@ async function putObject(key, localPath, credentials)
 
 function md5OfFile(localPath)
 {
-	return new Promise((resolve, reject) =>
-	{
-		const hash
-			= createHash('md5');
-		createReadStream(localPath).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
-	});
+	return new Promise((resolve, reject) =>	{
+												const hash
+													= createHash('md5');
+												createReadStream(localPath).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
+											});
 }
 // #endregion
-
-
 
 
 // #region the steward
@@ -188,8 +179,6 @@ async function releaseReservations(reservations)
 	}
 }
 // #endregion
-
-
 
 
 // #region run
@@ -238,11 +227,13 @@ async function main()
 		let answer;
 		try
 		{
-			answer = await askSteward('/ask', {app: `The ${PROJECT_NAME} site`, what: `the bucket file ${bucketFile}`, bytes: statSync(`${SITE_FOLDER}/${bucketFile}`).size, fallback: `the ${PROJECT_NAME} publish stops, holding back this file, and the site keeps its last published version`});
+			answer
+				= await askSteward('/ask', {app: `The ${PROJECT_NAME} site`, what: `the bucket file ${bucketFile}`, bytes: statSync(`${SITE_FOLDER}/${bucketFile}`).size, fallback: `the ${PROJECT_NAME} publish stops, holding back this file, and the site keeps its last published version`});
 		}
 		catch
 		{
-			answer = undefined;
+			answer
+				= undefined;
 		}
 		if (answer?.isAllowed !== true)
 		{
@@ -270,9 +261,8 @@ async function main()
 	}
 }
 
-main().catch((error) =>
-{
-	console.log(`::error::${error.message}`);
-	process.exit(1);
-});
+main().catch((error) =>	{
+							console.log(`::error::${error.message}`);
+							process.exit(1);
+						});
 // #endregion
